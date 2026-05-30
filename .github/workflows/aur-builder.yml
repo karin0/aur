@@ -1,0 +1,118 @@
+name: AUR Builder
+
+on:
+  schedule:
+    - cron: '0 2 * * *'      # Automaticaly runs daily at 2:00 AM UTC 
+  workflow_dispatch:         # Allows manually triggering the build pipeline via the GitHub Web UI
+
+permissions:
+  contents: write            # Grants write access to create/update releases and upload assets
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [generic, alderlake, tremont, znver5]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # 1. Cache Pacman Packages: Cache downloaded .pkg.tar.zst dependencies to speed up container setup
+      - name: Cache Pacman Packages
+        uses: actions/cache@v5
+        with:
+          path: pacman-cache
+          key: pacman-cache-${{ matrix.profile }}-${{ hashFiles('profiles/${{ matrix.profile }}/packages.txt') }}
+          restore-keys: |
+            pacman-cache-${{ matrix.profile }}-
+
+      # 2. Cache AUR Clones: Cache cloned AUR git repositories to speed up fetch/patch steps
+      - name: Cache AUR Clones
+        uses: actions/cache@v5
+        with:
+          path: clones
+          key: aur-clones-${{ matrix.profile }}-${{ hashFiles('profiles/${{ matrix.profile }}/packages.txt') }}
+          restore-keys: |
+            aur-clones-${{ matrix.profile }}-
+
+      # 3. Incremental Sync: Download only the active database files and active packages
+      - name: Download Existing Release Packages
+        run: ./scripts/download-release-assets.sh ${{ matrix.profile }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      # 4. Parallel Arch Builder: Run compilation inside a clean Arch Linux container
+      - name: Build Packages in Arch Container
+        run: |
+          mkdir -p pacman-cache clones
+          docker run \
+            -v "$PWD":/workspace \
+            -v "$PWD/pacman-cache":/var/cache/pacman/pkg \
+            -w /workspace \
+            -e NO_CHROOT=1 \
+            archlinux:latest \
+            bash -c "
+              # A. Initialize the pacman keyring 
+              pacman-key --init
+              pacman-key --populate archlinux
+              
+              # B. Install dependencies
+              pacman -Syu --noconfirm base-devel
+              
+              # C. Disable pacman 7 landlock sandbox (unsupported on GitHub runners)
+              sed -i 's,#DisableSandbox,DisableSandbox,' /etc/pacman.conf
+              
+              # D. Create unprivileged builder user matching host runner's UID/GID to avoid permission issues
+              host_uid=\$(stat -c '%u' /workspace)
+              host_gid=\$(stat -c '%g' /workspace)
+              groupadd -g \"\$host_gid\" builder || true
+              useradd -m -u \"\$host_uid\" -g builder builder || true
+              echo 'builder ALL=(ALL:ALL) NOPASSWD: ALL' >> /etc/sudoers
+              
+              # E. Grant builder user ownership of workspace and pacman cache for compilation and caching
+              chown -R builder:builder /workspace
+              chown -R builder:builder /var/cache/pacman/pkg
+              
+              # F. Download, compile, and install aurutils inside builder's home directory
+              sudo -H -u builder env PATH=\"\$PATH\" bash -c '
+                cd ~ && \
+                curl -sSfLO https://aur.archlinux.org/cgit/aur.git/snapshot/aurutils.tar.gz && \
+                tar -xf aurutils.tar.gz && \
+                cd aurutils && \
+                makepkg --syncdeps --noconfirm --skippgpcheck && \
+                sudo pacman -U --noconfirm aurutils-*.pkg.tar.zst
+              '
+              
+              # G. As builder: Execute high-performance declarative sync script without chroot
+              sudo -H -u builder env PATH=\"\$PATH\" NO_CHROOT=1 ./sync.sh profiles/${{ matrix.profile }}
+            "
+
+      # 5. Sync & Clean: Clean obsolete packages, resolve symlinks, and remove old release assets
+      - name: Synchronize and Clean Repository Assets
+        run: ./scripts/clean-release-assets.sh ${{ matrix.profile }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      # 6. Publish: Ensure the dedicated architecture Release Tag exists
+      - name: Ensure Dedicated Release Tag Exists
+        run: |
+          gh release create ${{ matrix.profile }} \
+            --title ${{ matrix.profile }} \
+            --repo ${{ github.repository }} || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 7. Incremental Release Update: Upload and overwrite (.db.tar.zst and updated .pkg.tar.zst)
+      # Unchanged packages remain safely untouched inside the release without re-uploading!
+      - name: Upload and Clobber Assets to Release Channel
+        run: |
+          gh release upload ${{ matrix.profile }} \
+            repos/${{ matrix.profile }}/* \
+            --clobber \
+            --repo ${{ github.repository }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
