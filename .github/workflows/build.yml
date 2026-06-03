@@ -1,4 +1,4 @@
-name: AUR Voyager
+name: Sync AUR packages
 
 on:
   schedule:
@@ -7,6 +7,17 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Profile to build'
+        type: choice
+        options:
+          - all
+          - generic
+          - alderlake
+          - tremont
+          - znver5
+        default: all
 
 permissions:
   contents: write
@@ -20,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile: [generic, alderlake, tremont, znver5]
+        profile: ${{ (github.event.inputs.profile == 'all' || !github.event.inputs.profile) && fromJSON('["generic", "alderlake", "tremont", "znver5"]') || fromJSON(format('["{0}"]', github.event.inputs.profile)) }}
 
     steps:
       - uses: actions/checkout@v6
