@@ -1,11 +1,12 @@
 #!/bin/bash
-# patches/64gram-desktop.sh: Modifies 64gram-desktop's PKGBUILD to apply a static patch
-# specifically for build-time tools (tl-parser, generate_mime_types_gperf),
-# allowing successful compilation on older/different host CPUs.
+# Modifies 64gram-desktop's PKGBUILD to apply compile options for build-time tools,
+# allowing compilation on different host CPUs.
+
+set -eo pipefail
 
 pkg_dir=$1
 if [[ -z "$pkg_dir" || ! -d "$pkg_dir" ]]; then
-  echo "Usage: $0 <package_directory>" >&2
+  echo "Usage: $0 <package_dir>" >&2
   exit 1
 fi
 
@@ -17,36 +18,40 @@ if [[ ! -f "$PKGBUILD_PATH" ]]; then
   exit 1
 fi
 
-# Locate our static patch file in our repository's patches directory
 patches_dir=$(dirname "$(realpath "$0")")
-patch_src="$patches_dir/64gram-desktop-host-tools.patch"
+script='64gram-desktop-inject-host-flags.py'
 
-if [[ ! -f "$patch_src" ]]; then
-  echo "Error: Static patch $patch_src not found" >&2
-  exit 1
-fi
+echo "[64gram-desktop patch] Copying injection script to clone directory..."
+cp "$patches_dir/$script" "$pkg_dir/$script"
 
-echo "[64gram-desktop patch] Copying static patch to clone directory..."
-cp "$patch_src" "$pkg_dir/64gram-desktop-host-tools.patch"
+echo "[64gram-desktop patch] Patching PKGBUILD to inject compile option modifiers..."
 
-echo "[64gram-desktop patch] Patching PKGBUILD to inject static patch usage..."
-
-# 1. Inject the patch into the beginning of the source array
-sed -i '/source=(/a \        "64gram-desktop-host-tools.patch"' "$PKGBUILD_PATH"
+# 1. Inject the script into the beginning of the source array
+sed -i '/source=(/a \        "'"$script"'"' "$PKGBUILD_PATH"
 
 # 2. Inject 'SKIP' into the beginning of the sha512sums array to match the source order
 sed -i "/sha512sums=(/a \            'SKIP'" "$PKGBUILD_PATH"
 
-# 3. Inject the patch application command into the prepare() function
+# 3. Inject the python execution command into the prepare() function
 cat << 'EOF' > "$pkg_dir/patch_injection.tmp"
 
-    # AUV Patch: Apply static patch to force x86-64 compile options for host tools (Last-Argument Wins)
-    echo "=== [AUV Patch] Applying host tools compilation option overrides ==="
-    patch -Np1 -d "$srcdir/td" -i "$srcdir/64gram-desktop-host-tools.patch"
+    # Inject compile options dynamically for host tools
+    echo "=== [64gram-desktop patch] Injecting host tools compilation option overrides ==="
+    python3 "$srcdir/64gram-desktop-inject-host-flags.py" \
+        "$srcdir/td/td/generate/CMakeLists.txt" \
+        "$srcdir/td/td/generate/tl-parser/CMakeLists.txt" \
+        "$srcdir/td/tdtl/CMakeLists.txt" \
+        "$srcdir/td/tdutils/generate/CMakeLists.txt" \
+        "$srcdir/$_pkgname-$pkgver-full/cmake/external/glib/cppgir/CMakeLists.txt" \
+        "$srcdir/$_pkgname-$pkgver-full/Telegram/lib_base/CMakeLists.txt" \
+        "$srcdir/$_pkgname-$pkgver-full/Telegram/codegen/codegen/"*/CMakeLists.txt
+    sed -i 's/endfunction()/    message(STATUS "--- [DEBUG PATCH] Injecting options for target ${target_name}_${namespace}_dbus ---")\n    target_compile_options(${target_name}_${namespace}_dbus PRIVATE "-march=x86-64" "-O2")\nendfunction()/' cmake/external/glib/generate_dbus.cmake
 EOF
 
-# Inject the logic using sed (matching the patch application inside prepare())
 sed -i '/patch -Np1 -d Telegram\/lib_base/r '"$pkg_dir/patch_injection.tmp" "$PKGBUILD_PATH"
 rm -f "$pkg_dir/patch_injection.tmp"
+
+# 4. Make dos2unix quiet
+sed -i 's/exec dos2unix/exec dos2unix -q/' "$PKGBUILD_PATH"
 
 echo "[64gram-desktop patch] PKGBUILD patched successfully."
