@@ -31,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile: ${{ (github.event.inputs.profile == 'all' || !github.event.inputs.profile) && fromJSON('["generic", "alderlake", "tremont", "znver5"]') || fromJSON(format('["{0}"]', github.event.inputs.profile)) }}
+        profile: ${{ (inputs.profile == 'all' || !inputs.profile) && fromJSON('["generic", "alderlake", "tremont", "znver5"]') || fromJSON(format('["{0}"]', inputs.profile)) }}
 
     steps:
       - uses: actions/checkout@v6
@@ -46,8 +46,11 @@ jobs:
 
       - uses: karin0/auv@main
         with:
-          profile: ${{ matrix.profile }}
+          release_tag: ${{ matrix.profile }}
+          repo_name: aur-${{ matrix.profile }}
+          packages_file: profiles/${{ matrix.profile }}/packages.txt
+          makepkg_conf_file: profiles/${{ matrix.profile }}/makepkg.conf
+          patches_dir: patches
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
-          gpg_key_id: ${{ secrets.GPG_KEY_ID }}
           telegram_bot_token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           telegram_chat_id: ${{ secrets.TELEGRAM_CHAT_ID }}
