@@ -2,6 +2,7 @@
 aurutils
 byobu
 osu-lazer-bin
+hmcl-bin
 64gram-desktop-bin
 google-chrome
 visual-studio-code-bin
