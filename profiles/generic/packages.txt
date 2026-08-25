@@ -15,3 +15,4 @@ nvidia-580xx-dkms
 nvidia-580xx-utils
 tdl-bin
 slack-desktop
+antigravity-cli
