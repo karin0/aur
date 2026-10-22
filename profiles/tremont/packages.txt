@@ -1,2 +1,2 @@
-qbittorrent-enhanced-nox-git
+qbittorrent-enhanced-nox
 qt6-base-headless
