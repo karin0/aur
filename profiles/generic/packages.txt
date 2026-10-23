@@ -16,4 +16,5 @@ nvidia-580xx-utils
 tdl-bin
 slack-desktop
 antigravity-cli
+pinact-bin
 https://github.com/karin0/qnap8528-dkms.git
