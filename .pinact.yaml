@@ -3,3 +3,5 @@ ignore_actions:
   # The action of the auv repository is tracked at its main branch.
   - name: karin0/auv
     ref: main
+min_age:
+  value: 15
